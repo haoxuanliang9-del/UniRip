@@ -1,0 +1,52 @@
+Namespace(adv_num=1, adv_temp=2.0, batch_size=1024, con_temp=0, dataset='MKG-Y', dim=250, disen_weight=0.01, epoch=1000, img_dim=4096, lamda=0, learning_rate=0.0001, lrd=0.001, lrg=0.0001, margin=4.0, max_neighbor=32, miss_prop=None, miss_type=None, missing_rate=0.8, mu=0.0001, neg_num=64, postfix='', save='./checkpoint/MKG-Y-1024-250-64-0.0001-4-1e-4-1e-4-1000', seed=42, visual='random')
+RotatE(
+  (ent_embeddings): Embedding(15000, 500)
+  (rel_embeddings): Embedding(28, 250)
+  (img_embeddings): Embedding(15000, 383)
+  (text_embeddings): Embedding(15000, 384)
+  (img_proj): Sequential(
+    (0): Linear(in_features=383, out_features=500, bias=True)
+    (1): ReLU()
+    (2): Linear(in_features=500, out_features=500, bias=True)
+  )
+  (text_proj): Sequential(
+    (0): Linear(in_features=384, out_features=500, bias=True)
+    (1): ReLU()
+    (2): Linear(in_features=500, out_features=500, bias=True)
+  )
+  (ent_attn): Linear(in_features=500, out_features=1, bias=False)
+  (modal_attn): MultiheadAttention(
+    (out_proj): NonDynamicallyQuantizableLinear(in_features=500, out_features=500, bias=True)
+  )
+  (gate_v): Linear(in_features=500, out_features=500, bias=True)
+  (gate_t): Linear(in_features=500, out_features=500, bias=True)
+  (rel_gate): Embedding(28, 1)
+)
+Finish initializing...
+  0%|          | 0/1000 [00:00<?, ?it/s]  0%|          | 0/1000 [00:00<?, ?it/s]
+Input Files Path : ./benchmarks/MKG-Y/
+The toolkit is importing datasets.
+The total of relations is 28.
+The total of entities is 15000.
+The total of train triples is 21310.
+Input Files Path : ./benchmarks/MKG-Y/
+The total of test triples is 2663.
+The total of valid triples is 2665.
+Traceback (most recent call last):
+  File "run_adv_wgan_gp.py", line 110, in <module>
+    trainer.run()
+  File "/root/MMKGC/mmkgc/config/WCGTrainerGP.py", line 95, in run
+    loss = self.train_one_step(data)
+  File "/root/MMKGC/mmkgc/config/WCGTrainerGP.py", line 63, in train_one_step
+    loss = self.model({
+  File "/root/miniconda3/lib/python3.8/site-packages/torch/nn/modules/module.py", line 1102, in _call_impl
+    return forward_call(*input, **kwargs)
+  File "/root/MMKGC/mmkgc/module/strategy/NegativeSamplingGP.py", line 33, in forward
+    score = self.model(data)
+  File "/root/miniconda3/lib/python3.8/site-packages/torch/nn/modules/module.py", line 1102, in _call_impl
+    return forward_call(*input, **kwargs)
+  File "/root/MMKGC/mmkgc/module/model/RotatE.py", line 244, in forward
+    h_anchor, _ = self._nae_anchor(h, h_img_emb, h_text_emb, r, batch_h, batch_r)
+  File "/root/MMKGC/mmkgc/module/model/RotatE.py", line 128, in _nae_anchor
+    rel_sum = (neighbor_rel_emb * rel_mask_f).sum(dim=1)
+RuntimeError: CUDA out of memory. Tried to allocate 1.98 GiB (GPU 0; 23.64 GiB total capacity; 18.06 GiB already allocated; 745.75 MiB free; 20.72 GiB reserved in total by PyTorch) If reserved memory is >> allocated memory try setting max_split_size_mb to avoid fragmentation.  See documentation for Memory Management and PYTORCH_CUDA_ALLOC_CONF
