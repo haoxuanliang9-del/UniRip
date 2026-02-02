@@ -3,6 +3,6 @@ from __future__ import division
 from __future__ import print_function
 
 from .Tester import Tester
-from .WCGTrainerGP import WCGTrainerGP
+from .Trainer import Trainer
 
-__all__ = ['Tester', 'WCGTrainerGP']
+__all__ = ['Tester', 'Trainer']

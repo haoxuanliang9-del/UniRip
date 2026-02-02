@@ -1,6 +1,6 @@
 import torch
 import logging
-from mmkgc.config import Tester, WCGTrainerGP
+from mmkgc.config import Tester, Trainer
 from mmkgc.module.model import RotatE
 from mmkgc.module.loss import SigmoidLoss
 from mmkgc.module.strategy import NegativeSamplingGP
@@ -32,6 +32,12 @@ if __name__ == "__main__":
         "./benchmarks/" + args.dataset + '/', "link")
     img_emb = torch.load('./embeddings/' + args.dataset + '-visual.pth')
     text_emb = torch.load('./embeddings/' + args.dataset + '-textual.pth')
+    
+    # Load numeric embedding if it exists (e.g. for DB15K)
+    import os
+    num_path = './embeddings/' + args.dataset + '-numeric.pth'
+    num_emb = torch.load(num_path) if os.path.exists(num_path) else None
+
     def build_adj_tensor(triple_path, ent_tot, max_neighbors):
         adj_entities = [[] for _ in range(ent_tot)]
         adj_relations = [[] for _ in range(ent_tot)]
@@ -75,6 +81,7 @@ if __name__ == "__main__":
         epsilon=2.0,
         img_emb=img_emb,
         text_emb=text_emb,
+        num_emb=num_emb,
         adj_entities=adj_entities,
         adj_relations=adj_relations,
         neighbor_mask=neighbor_mask,
