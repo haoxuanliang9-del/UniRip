@@ -16,7 +16,7 @@ from tqdm import tqdm
 from torch.cuda.amp import autocast, GradScaler
 
 
-class WCGTrainerGP(object):
+class Trainer(object):
 
     def __init__(self,
                  model=None,
@@ -153,5 +153,9 @@ class WCGTrainerGP(object):
 
     def set_checkpoint_dir(self, checkpoint_dir):
         self.checkpoint_dir = checkpoint_dir
+
+
+
+
 
 

@@ -1,3 +1,4 @@
+import math
 import torch
 import torch.autograd as autograd
 import torch.nn as nn
@@ -69,12 +70,19 @@ class RotatE(Model):
         self.ent_attn.requires_grad_(True)
 
         self.rel_sim_threshold = rel_sim_threshold
-        self.attn_heads = self._resolve_attn_heads(self.dim_e, attn_heads)
-        self.modal_attn = nn.MultiheadAttention(
-            embed_dim=self.dim_e,
-            num_heads=self.attn_heads,
-            batch_first=True
-        )
+        self.modal_attn_q = nn.Linear(self.dim_e, self.dim_e)
+        self.modal_attn_k = nn.Linear(self.dim_e, self.dim_e)
+        self.modal_attn_v = nn.Linear(self.dim_e, self.dim_e)
+        self.dropout = nn.Dropout(0.1)
+        self.nei_temp = nn.Parameter(torch.tensor(10.0))
+        self.rel_temp = nn.Embedding(self.rel_tot, 1)
+        nn.init.zeros_(self.rel_temp.weight)
+        self.nei_topk = max(4, min(16, max_neighbors // 2))
+        self.ctx_gate = nn.Parameter(torch.tensor(-1.0))
+        self.nei_gate = nn.Parameter(torch.tensor(-2.0))
+        self.rel_ctx_proj = nn.Linear(self.dim_r, 1)
+        self.neighbor_dropout = 0.08
+
         self.gate_v = nn.Linear(self.dim_e, self.dim_e)
         self.gate_t = nn.Linear(self.dim_e, self.dim_e)
         self.max_neighbors = max_neighbors
@@ -125,13 +133,21 @@ class RotatE(Model):
         if self.adj_entities is None or self.adj_relations is None or self.neighbor_mask is None:
             return es, es
 
-        # Process unique entity ids to avoid repeated work when batch contains many negatives
-        unique_ids, inv_idx = torch.unique(ent_ids, return_inverse=True)
+        # Use (entity, relation) pairs to avoid relation mixing in large batches
+        # pairs is (B, 2). Ensure rel_ids matches ent_ids for evaluation/broadcasting.
+        if ent_ids.shape != rel_ids.shape:
+            rel_ids = rel_ids.expand_as(ent_ids)
+        pairs = torch.stack([ent_ids, rel_ids], dim=1)
+        unique_pairs, inv_idx = torch.unique(pairs, dim=0, return_inverse=True)
+        unique_ent_ids = unique_pairs[:, 0]
+        unique_rel_ids = unique_pairs[:, 1]
+        
         device = ent_ids.device
+        U = unique_pairs.size(0)
 
-        neighbor_ids_u = self.adj_entities[unique_ids]
-        neighbor_rels_u = self.adj_relations[unique_ids]
-        valid_neighbors_u = self.neighbor_mask[unique_ids]
+        neighbor_ids_u = self.adj_entities[unique_ent_ids]
+        neighbor_rels_u = self.adj_relations[unique_ent_ids]
+        valid_neighbors_u = self.neighbor_mask[unique_ent_ids]
 
         # Use pre-projected embeddings for unique neighbors (U, K, D)
         neighbor_es_u = self.ent_embeddings(neighbor_ids_u)
@@ -143,54 +159,71 @@ class RotatE(Model):
             neighbor_en_u = en_proj[neighbor_ids_u]
 
         neighbor_rel_emb_u = self.rel_embeddings(neighbor_rels_u)
+        rel_emb_u = self.rel_embeddings(unique_rel_ids) # Exact relation condition for this unique pair
 
-        # relation similarity pooling on unique set
-        rel_mask_u = valid_neighbors_u
-        rel_mask_fu = rel_mask_u.unsqueeze(-1).to(neighbor_rel_emb_u.dtype)
-        rel_sum_u = (neighbor_rel_emb_u * rel_mask_fu).sum(dim=1)
-        rel_count_u = rel_mask_u.sum(dim=1).unsqueeze(-1).clamp(min=1).to(rel_sum_u.dtype)
-        pooled_rel_u = rel_sum_u / rel_count_u
+        # Calculate per-neighbor differential weights using relation similarity
+        rel_emb_u_exp = rel_emb_u.unsqueeze(1)
+        # (U, K)
+        neighbor_sim = F.cosine_similarity(rel_emb_u_exp, neighbor_rel_emb_u, dim=-1)
 
-        # aggregate relation embeddings from occurrences in the batch for each unique entity
-        if rel_emb is not None:
-            if rel_emb.size(0) != ent_ids.size(0):
-                rel_emb = rel_emb.expand(ent_ids.size(0), -1)
-            U = unique_ids.size(0)
-            dim_r = rel_emb.size(-1)
-            rel_emb_u_sum = torch.zeros(U, dim_r, device=rel_emb.device, dtype=rel_emb.dtype)
-            rel_emb_u_sum = rel_emb_u_sum.index_add(0, inv_idx, rel_emb)
-            rel_counts = torch.bincount(inv_idx, minlength=U).unsqueeze(-1).clamp(min=1).to(rel_emb_u_sum.dtype)
-            rel_emb_u = rel_emb_u_sum / rel_counts
+        # Apply mask (+ optional threshold pruning) and softmax to get weights
+        base_mask = valid_neighbors_u
+        neighbor_sim_masked = neighbor_sim.masked_fill(~base_mask, -1e9)
+
+        # Top-k filtering to reduce noise on high-degree entities
+        if self.nei_topk is not None and neighbor_sim_masked.size(1) > self.nei_topk:
+            topk_vals, _ = torch.topk(neighbor_sim_masked, k=self.nei_topk, dim=1)
+            kth = topk_vals[:, -1].unsqueeze(1)
+            topk_mask = neighbor_sim_masked >= kth
         else:
-            rel_emb_u = pooled_rel_u
-        rel_sim_pooled_u = F.cosine_similarity(rel_emb_u, pooled_rel_u, dim=-1)
-        rel_sim_pooled_u = (rel_sim_pooled_u + 1.0) / 2.0
+            topk_mask = base_mask
 
-        # Neighborhood pooling (mean) for unique ids
-        mask_fu = valid_neighbors_u.unsqueeze(-1).to(neighbor_es_u.dtype)
-        sum_es_u = (neighbor_es_u * mask_fu).sum(dim=1)
-        sum_ev_u = (neighbor_ev_u * mask_fu).sum(dim=1)
-        sum_et_u = (neighbor_et_u * mask_fu).sum(dim=1)
+        if self.rel_sim_threshold is not None:
+            thresh_mask = neighbor_sim >= self.rel_sim_threshold
+            final_mask = base_mask & topk_mask & thresh_mask
+        else:
+            final_mask = base_mask & topk_mask
+
+        # Fallback if all neighbors are filtered out
+        has_any = final_mask.any(dim=1, keepdim=True)
+        final_mask = final_mask | ((~has_any) & base_mask)
+
+        # Neighbor dropout during training to regularize high-degree nodes
+        if self.training and self.neighbor_dropout > 0.0:
+            drop_rand = torch.rand_like(neighbor_sim)
+            drop_mask = drop_rand < self.neighbor_dropout
+            final_mask = final_mask & ~drop_mask
+            has_any = final_mask.any(dim=1, keepdim=True)
+            final_mask = final_mask | ((~has_any) & base_mask)
+
+        # Sharpen weights using relation-conditioned temperature
+        rel_temp = F.softplus(self.rel_temp(unique_rel_ids)).clamp(min=0.5, max=10.0)
+        neighbor_sim_sharp = neighbor_sim * rel_temp
+        # Soft gate penalizes neighbors far below relation threshold
+        gate_thresh = self.rel_sim_threshold if self.rel_sim_threshold is not None else 0.2
+        gate_vals = torch.sigmoid(self.nei_gate * (neighbor_sim - gate_thresh))
+        neighbor_sim_sharp = neighbor_sim_sharp + torch.log(gate_vals + 1e-6)
+        neighbor_sim_sharp = neighbor_sim_sharp.masked_fill(~final_mask, -1e9)
+        weights_u = F.softmax(neighbor_sim_sharp, dim=-1) # (U, K)
+        weights_fu = weights_u.unsqueeze(-1).to(neighbor_es_u.dtype) # (U, K, 1)
+
+        # Weighted aggregation for unique ids
+        pooled_es_u = (neighbor_es_u * weights_fu).sum(dim=1)
         
-        sum_en_u = None
-        if neighbor_en_u is not None:
-            sum_en_u = (neighbor_en_u * mask_fu).sum(dim=1)
+        # Relation-aware beta for anchor synthesis
+        # Instead of global average, use max similarity to measure neighborhood relevance
+        max_sim_u, _ = neighbor_sim.max(dim=1, keepdim=True)
+        # Use sigmoid to determine beta: if max_sim > threshold, trust neighborhood
+        thresh = self.rel_sim_threshold if self.rel_sim_threshold is not None else 0.3
+        beta = torch.sigmoid(10.0 * (max_sim_u - thresh)).to(pooled_es_u.dtype)
 
-        counts_u = valid_neighbors_u.sum(dim=1).unsqueeze(-1).clamp(min=1).to(sum_es_u.dtype)
-
-        pooled_es_u = sum_es_u / counts_u
-        pooled_ev_u = sum_ev_u / counts_u
-        pooled_et_u = sum_et_u / counts_u
+        # anchors for unique ids
+        es_u = self.ent_embeddings(unique_ent_ids)
+        anchor_u = beta * pooled_es_u + (1.0 - beta) * es_u
         
-        pooled_en_u = None
-        if sum_en_u is not None:
-            pooled_en_u = sum_en_u / counts_u
-
-        # anchors for unique ids (fallback to es_u when no valid neighbors)
+        # fallback for unique ids with no valid neighbors
         has_valid_u = valid_neighbors_u.any(dim=1)
-        anchor_u = pooled_es_u.clone()
         if (~has_valid_u).any():
-            es_u = self.ent_embeddings(unique_ids)
             anchor_u[~has_valid_u] = es_u[~has_valid_u].to(anchor_u.dtype).to(anchor_u.device)
 
         # map anchors back to original batch order
@@ -198,38 +231,47 @@ class RotatE(Model):
 
         return anchor, anchor
 
-    def _sagaf(self, es, ev, et, anchor, en=None):
+    def _sagaf(self, es, ev, et, anchor, en=None, rg=None, ctx_hint=None):
         gate_v = torch.sigmoid(self.gate_v(anchor))
         gate_t = torch.sigmoid(self.gate_t(anchor))
-        ev_dn = ev * gate_v
-        et_dn = et * gate_t
-        
+        # Use L2 normalization for modalities to stabilize attention scores
+        ev_dn = F.normalize(ev * gate_v, dim=-1)
+        et_dn = F.normalize(et * gate_t, dim=-1)
+
         en_dn = None
         if en is not None and hasattr(self, 'gate_n'):
             gate_n = torch.sigmoid(self.gate_n(anchor))
-            en_dn = en * gate_n
+            en_dn = F.normalize(en * gate_n, dim=-1)
 
-        # Structure-guided gated weighted fusion using cosine similarity as modality weights
-        cos_v = F.cosine_similarity(anchor, ev_dn, dim=-1, eps=1e-8)
-        cos_t = F.cosine_similarity(anchor, et_dn, dim=-1, eps=1e-8)
-        wv = (cos_v + 1.0) / 2.0
-        wt = (cos_t + 1.0) / 2.0
-        
+        candidates = [ev_dn, et_dn]
         if en_dn is not None:
-            cos_n = F.cosine_similarity(anchor, en_dn, dim=-1, eps=1e-8)
-            wn = (cos_n + 1.0) / 2.0
-            denom = (wv + wt + wn).unsqueeze(-1) + 1e-8
-            wv = (wv.unsqueeze(-1) / denom)
-            wt = (wt.unsqueeze(-1) / denom)
-            wn = (wn.unsqueeze(-1) / denom)
-            h_uni = wv * ev_dn + wt * et_dn + wn * en_dn + es
-        else:
-            denom = (wv + wt).unsqueeze(-1) + 1e-8
-            wv = (wv.unsqueeze(-1) / denom)
-            wt = (wt.unsqueeze(-1) / denom)
-            h_uni = wv * ev_dn + wt * et_dn + es
-            
-        return h_uni
+            candidates.append(en_dn)
+
+        stacked = torch.stack(candidates, dim=1)
+        # Use original anchor scale for query to better match structural space
+        query = self.modal_attn_q(anchor).unsqueeze(1)
+        keys = self.modal_attn_k(stacked)
+        values = self.modal_attn_v(stacked)
+
+        # Scale dot-product attention
+        scores = (query * keys).sum(dim=-1) / math.sqrt(self.dim_e)
+        attn_weights = F.softmax(scores, dim=-1)
+        # Apply dropout to attention weights for regularization
+        attn_weights = self.dropout(attn_weights)
+        context = (attn_weights.unsqueeze(-1) * values).sum(dim=1)
+
+        ctx_scale = self.ctx_gate
+        if rg is not None:
+            if rg.shape[0] != es.shape[0]:
+                rg = rg.expand(es.shape[0], -1)
+            ctx_scale = ctx_scale + 0.1 * rg.squeeze(-1)
+        if ctx_hint is not None:
+            if ctx_hint.shape[0] != es.shape[0]:
+                ctx_hint = ctx_hint.expand(es.shape[0], -1)
+            ctx_scale = ctx_scale + 0.3 * ctx_hint.squeeze(-1)
+        ctx_scale = torch.sigmoid(ctx_scale)
+
+        return es + ctx_scale.unsqueeze(-1) * context
 
     def get_struct_consistency_loss(self):
         if self._last_struct_cons_loss is None:
@@ -322,8 +364,10 @@ class RotatE(Model):
         else:
             self._last_struct_cons_loss = torch.tensor(0.0, device=h.device)
 
-        h_joint = self._sagaf(h, h_img_emb, h_text_emb, h_anchor, h_num_emb)
-        t_joint = self._sagaf(t, t_img_emb, t_text_emb, t_anchor, t_num_emb)
+        rg = self.rel_gate(batch_r)
+        ctx_hint = torch.tanh(self.rel_ctx_proj(r))
+        h_joint = self._sagaf(h, h_img_emb, h_text_emb, h_anchor, h_num_emb, rg, ctx_hint)
+        t_joint = self._sagaf(t, t_img_emb, t_text_emb, t_anchor, t_num_emb, rg, ctx_hint)
         score = self.margin - self._calc(h_joint, t_joint, r, mode)
         return score
 

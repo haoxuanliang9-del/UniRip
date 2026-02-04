@@ -3,7 +3,7 @@ import logging
 from mmkgc.config import Tester, Trainer
 from mmkgc.module.model import RotatE
 from mmkgc.module.loss import SigmoidLoss
-from mmkgc.module.strategy import NegativeSamplingGP
+from mmkgc.module.strategy import NegativeSampling
 from mmkgc.data import TrainDataLoader, TestDataLoader
 
 from args import get_args
@@ -11,7 +11,7 @@ from args import get_args
 if __name__ == "__main__":
     args = get_args()
     print(args)
-    # 设置日志输出到文件
+
     logging.basicConfig(filename='training.log', level=logging.INFO, format='%(asctime)s - %(message)s')
     # set the seed
     torch.manual_seed(args.seed)
@@ -89,7 +89,7 @@ if __name__ == "__main__":
     )
     print(kge_score)
     # define the loss function
-    model = NegativeSamplingGP(
+    model = NegativeSampling(
         model=kge_score,
         loss=SigmoidLoss(adv_temperature=args.adv_temp),
         batch_size=train_dataloader.get_batch_size(),
@@ -100,7 +100,7 @@ if __name__ == "__main__":
     # train the model
     tester = Tester(model=kge_score, data_loader=test_dataloader, use_gpu=True)
 
-    trainer = WCGTrainerGP(
+    trainer = Trainer(
         model=model,
         data_loader=train_dataloader,
         train_times=args.epoch,
@@ -109,9 +109,9 @@ if __name__ == "__main__":
         opt_method='Adam',
         mu=args.mu,
         tester=tester,
-        test_interval=100,
+        test_interval=50,
         early_stop_delta=0.01,
-        early_stop_patience=100
+        early_stop_patience=50
     )
 
     trainer.run()

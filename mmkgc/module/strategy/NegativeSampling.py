@@ -1,7 +1,7 @@
 from .Strategy import Strategy
 
 
-class NegativeSamplingGP(Strategy):
+class NegativeSampling(Strategy):
     def __init__(
         self,
         model=None,
@@ -11,7 +11,7 @@ class NegativeSamplingGP(Strategy):
         l3_regul_rate=0.0,
         struct_cons_rate=0.0
     ):
-        super(NegativeSamplingGP, self).__init__()
+        super(NegativeSampling, self).__init__()
         self.model = model
         self.loss = loss
         self.batch_size = batch_size
