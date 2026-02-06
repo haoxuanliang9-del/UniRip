@@ -12,6 +12,6 @@ class Model(BaseModule):
 
 	def forward(self):
 		raise NotImplementedError
-	
+ 
 	def predict(self):
 		raise NotImplementedError

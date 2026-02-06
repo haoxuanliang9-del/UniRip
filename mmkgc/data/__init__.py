@@ -6,6 +6,6 @@ from .TrainDataLoader import TrainDataLoader
 from .TestDataLoader import TestDataLoader
 
 __all__ = [
-	'TrainDataLoader',
-	'TestDataLoader'
+ 'TrainDataLoader',
+ 'TestDataLoader'
 ]

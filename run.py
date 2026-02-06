@@ -13,10 +13,10 @@ if __name__ == "__main__":
     print(args)
 
     logging.basicConfig(filename='training.log', level=logging.INFO, format='%(asctime)s - %(message)s')
-    # set the seed
+                  
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed_all(args.seed)
-    # dataloader for training
+                             
     train_dataloader = TrainDataLoader(
         in_path="./benchmarks/" + args.dataset + '/',
         batch_size=args.batch_size,
@@ -27,13 +27,13 @@ if __name__ == "__main__":
         neg_ent=args.neg_num,
         neg_rel=0
     )
-    # dataloader for test
+                         
     test_dataloader = TestDataLoader(
         "./benchmarks/" + args.dataset + '/', "link")
     img_emb = torch.load('./embeddings/' + args.dataset + '-visual.pth')
     text_emb = torch.load('./embeddings/' + args.dataset + '-textual.pth')
     
-    # Load numeric embedding if it exists (e.g. for DB15K)
+                                                          
     import os
     num_path = './embeddings/' + args.dataset + '-numeric.pth'
     num_emb = torch.load(num_path) if os.path.exists(num_path) else None
@@ -72,7 +72,7 @@ if __name__ == "__main__":
         args.max_neighbor
     )
 
-    # define the model
+                      
     kge_score = RotatE(
         ent_tot=train_dataloader.get_ent_tot(),
         rel_tot=train_dataloader.get_rel_tot(),
@@ -88,16 +88,17 @@ if __name__ == "__main__":
         max_neighbors=args.max_neighbor
     )
     print(kge_score)
-    # define the loss function
+                              
     model = NegativeSampling(
         model=kge_score,
         loss=SigmoidLoss(adv_temperature=args.adv_temp),
         batch_size=train_dataloader.get_batch_size(),
         regul_rate=0.00001,
-        struct_cons_rate=args.lamda
+        struct_cons_rate=args.lamda,
+        modal_align_rate=args.modal_align_rate
     )
     
-    # train the model
+                     
     tester = Tester(model=kge_score, data_loader=test_dataloader, use_gpu=True)
 
     trainer = Trainer(
@@ -107,17 +108,24 @@ if __name__ == "__main__":
         alpha=args.learning_rate,
         use_gpu=True,
         opt_method='Adam',
+        weight_decay=args.weight_decay,
         mu=args.mu,
         tester=tester,
         test_interval=50,
         early_stop_delta=0.01,
-        early_stop_patience=50
+        early_stop_patience=args.loss_early_stop_patience,
+        metric_name=args.metric,
+        metric_delta=args.metric_delta,
+        metric_patience=args.metric_patience,
+        lr_decay_patience=args.lr_decay_patience,
+        lr_decay_factor=args.lr_decay_factor,
+        checkpoint_dir=args.save
     )
 
     trainer.run()
     kge_score.save_checkpoint(args.save)
 
-    # test the model
+                    
     kge_score.load_checkpoint(args.save)
     tester = Tester(model=kge_score, data_loader=test_dataloader, use_gpu=True)
     tester.run_link_prediction(type_constrain=False)

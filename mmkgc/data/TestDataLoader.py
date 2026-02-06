@@ -1,4 +1,4 @@
-# coding:utf-8
+              
 import os
 import ctypes
 import numpy as np
@@ -29,23 +29,23 @@ class TestDataLoader(object):
 		self.lib = ctypes.cdll.LoadLibrary(base_file)
 		"""for link prediction"""
 		self.lib.getHeadBatch.argtypes = [
-			ctypes.c_void_p,
-			ctypes.c_void_p,
-			ctypes.c_void_p,
+		 ctypes.c_void_p,
+		 ctypes.c_void_p,
+		 ctypes.c_void_p,
 		]
 		self.lib.getTailBatch.argtypes = [
-			ctypes.c_void_p,
-			ctypes.c_void_p,
-			ctypes.c_void_p,
+		 ctypes.c_void_p,
+		 ctypes.c_void_p,
+		 ctypes.c_void_p,
 		]
 		"""for triple classification"""
 		self.lib.getTestBatch.argtypes = [
-			ctypes.c_void_p,
-			ctypes.c_void_p,
-			ctypes.c_void_p,
-			ctypes.c_void_p,
-			ctypes.c_void_p,
-			ctypes.c_void_p,
+		 ctypes.c_void_p,
+		 ctypes.c_void_p,
+		 ctypes.c_void_p,
+		 ctypes.c_void_p,
+		 ctypes.c_void_p,
+		 ctypes.c_void_p,
 		]
 		"""set essential parameters"""
 		self.in_path = in_path
@@ -89,42 +89,42 @@ class TestDataLoader(object):
 		res = []
 		self.lib.getHeadBatch(self.test_h_addr, self.test_t_addr, self.test_r_addr)
 		res.append({
-			"batch_h": self.test_h.copy(), 
-			"batch_t": self.test_t[:1].copy(), 
-			"batch_r": self.test_r[:1].copy(),
-			"mode": "head_batch"
+		 "batch_h": self.test_h.copy(), 
+		 "batch_t": self.test_t[:1].copy(), 
+		 "batch_r": self.test_r[:1].copy(),
+		 "mode": "head_batch"
 		})
 		self.lib.getTailBatch(self.test_h_addr, self.test_t_addr, self.test_r_addr)
 		res.append({
-			"batch_h": self.test_h[:1],
-			"batch_t": self.test_t,
-			"batch_r": self.test_r[:1],
-			"mode": "tail_batch"
+		 "batch_h": self.test_h[:1],
+		 "batch_t": self.test_t,
+		 "batch_r": self.test_r[:1],
+		 "mode": "tail_batch"
 		})
 		return res
 
 	def sampling_tc(self):
 		self.lib.getTestBatch(
-			self.test_pos_h_addr,
-			self.test_pos_t_addr,
-			self.test_pos_r_addr,
-			self.test_neg_h_addr,
-			self.test_neg_t_addr,
-			self.test_neg_r_addr,
+		 self.test_pos_h_addr,
+		 self.test_pos_t_addr,
+		 self.test_pos_r_addr,
+		 self.test_neg_h_addr,
+		 self.test_neg_t_addr,
+		 self.test_neg_r_addr,
 		)
 		return [ 
-			{
-				'batch_h': self.test_pos_h,
-				'batch_t': self.test_pos_t,
-				'batch_r': self.test_pos_r ,
-				"mode": "normal"
-			}, 
-			{
-				'batch_h': self.test_neg_h,
-				'batch_t': self.test_neg_t,
-				'batch_r': self.test_neg_r,
-				"mode": "normal"
-			}
+		 {
+		  'batch_h': self.test_pos_h,
+		  'batch_t': self.test_pos_t,
+		  'batch_r': self.test_pos_r ,
+		  "mode": "normal"
+		 }, 
+		 {
+		  'batch_h': self.test_neg_h,
+		  'batch_t': self.test_neg_t,
+		  'batch_r': self.test_neg_r,
+		  "mode": "normal"
+		 }
 		]
 
 	"""interfaces to get essential parameters"""

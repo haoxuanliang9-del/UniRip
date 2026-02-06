@@ -2,3 +2,4 @@ __pycache__/embeddings
 embeddings
 checkpoint
 embeddings
+training.log

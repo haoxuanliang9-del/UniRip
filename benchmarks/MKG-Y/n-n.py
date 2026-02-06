@@ -79,8 +79,8 @@ rellef = {}
 totlef = {}
 relrig = {}
 totrig = {}
-# lef: (h, r)
-# rig: (r, t)
+             
+             
 for i in lef:
 	if not i[1] in rellef:
 		rellef[i[1]] = 0

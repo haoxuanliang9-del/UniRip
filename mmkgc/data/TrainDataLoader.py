@@ -1,4 +1,4 @@
-# coding:utf-8
+              
 import os
 import ctypes
 import numpy as np
